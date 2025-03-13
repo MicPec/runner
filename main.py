@@ -179,30 +179,15 @@ def parse_user_input(text: str) -> RunnerInfo:
         raise
 
 
+@st.cache_data
 def get_model():
     model_path = "runner_model"
-
     try:
-        model = load_model(model_path)
+        model = load_model(model_path, platform="aws", authentication={"bucket": BUCKET_NAME})
         st.success("Załadowano istniejący model")
         return model
     except Exception as e:
         st.error(f"Błąd ładowania modelu: {str(e)}.")
-
-        # try to find other model
-        try:
-            model_files = [f for f in os.listdir(".") if f.endswith(".pkl")]
-            if model_files:
-                st.info(
-                    f"Znaleziono potencjalne pliki modelu: {', '.join(model_files)}. Próba załadowania pierwszego z nich."
-                )
-                model = load_model(model_files[0].split(".")[0])  # Remove .pkl extension
-                st.success(f"Załadowano model z pliku {model_files[0]}")
-                return model
-        except Exception as inner_e:
-            st.error(f"Nie udało się załadować alternatywnego modelu: {str(inner_e)}")
-
-        st.warning("Nie znaleziono modelu.")
         raise Exception("Nie znaleziono modelu.")
 
 
@@ -374,6 +359,21 @@ def main():
         display_results_page()
 
 
+@st.cache_data
+def load_dataframes():
+    try:
+        df_hw23 = pd.read_csv(f"s3://{BUCKET_NAME}/halfmarathon_wroclaw_2023__final.csv", sep=";")
+        df_hw24 = pd.read_csv(f"s3://{BUCKET_NAME}/halfmarathon_wroclaw_2024__final.csv", sep=";")
+        df_hw = pd.concat([df_hw23, df_hw24], ignore_index=True)
+        return df_hw
+    except Exception as e:
+        st.markdown(
+            f'<div class="warning-box">⚠️ Nie udało się załadować danych półmaratonu: {str(e)}</div>',
+            unsafe_allow_html=True,
+        )
+        return None
+
+
 def display_input_page():
     st.markdown('<h1 class="main-header">🏃 Kalkulator Czasu Półmaratonu</h1>', unsafe_allow_html=True)
 
@@ -392,18 +392,8 @@ def display_input_page():
         unsafe_allow_html=True,
     )
 
-    try:
-        df_hw23 = pd.read_csv("halfmarathon_wroclaw_2023__final.csv", sep=";")
-        df_hw24 = pd.read_csv("halfmarathon_wroclaw_2024__final.csv", sep=";")
-        df_hw = pd.concat([df_hw23, df_hw24], ignore_index=True)
-        data_loaded = True
-    except Exception as e:
-        st.markdown(
-            f'<div class="warning-box">⚠️ Nie udało się załadować danych półmaratonu: {str(e)}</div>',
-            unsafe_allow_html=True,
-        )
-        df_hw = None
-        data_loaded = False
+    df_hw = load_dataframes()
+    data_loaded = df_hw is not None
 
     tabs = st.tabs(["📋 Formularz", "💬 Język naturalny"])
 
@@ -615,7 +605,7 @@ def display_results_page():
 
     # ML model results
     with col1:
-        st.markdown('<h3 class="section-header">🤖 Predykcja modelem ML</h3>', unsafe_allow_html=True)
+        st.markdown('<h3 class="section-header">🤖 Modelem ML</h3>', unsafe_allow_html=True)
         st.markdown(
             f"""
         <div style="text-align: center; margin: 1rem 0;">
@@ -630,7 +620,7 @@ def display_results_page():
     # Mean algorithm results if available
     with col2:
         if results["mean"] is not None:
-            st.markdown('<h3 class="section-header">📊 Predykcja algorytmem średniej</h3>', unsafe_allow_html=True)
+            st.markdown('<h3 class="section-header">📊 Modelem średniej</h3>', unsafe_allow_html=True)
             st.markdown(
                 f"""
             <div style="text-align: center; margin: 1rem 0;">
@@ -769,11 +759,11 @@ def display_results_page():
 
     st.markdown(recommendation, unsafe_allow_html=True)
 
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("🔄 Wróć do strony głównej", use_container_width=True):
-            st.session_state.page = "input"
-            st.rerun()
+    if st.button("🔄 Wróć do strony głównej", use_container_width=True):
+        st.session_state.runner_info = None
+        st.session_state.prediction_results = None
+        st.session_state.page = "input"
+        st.rerun()
 
 
 if __name__ == "__main__":
